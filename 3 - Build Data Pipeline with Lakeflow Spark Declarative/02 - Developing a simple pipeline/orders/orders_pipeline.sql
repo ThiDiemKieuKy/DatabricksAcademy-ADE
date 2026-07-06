@@ -1,0 +1,30 @@
+-- orders_bronze_demo
+CREATE OR REFRESH STREAMING TABLE orders_bronze_streaming AS
+SELECT *,
+        current_timestamp() AS processing_time,
+        _metadata.file_name as source_file
+FROM STREAM read_files(
+    '${source}/orders',
+    format => 'json'
+);
+
+-----------Silver - streaming table ---------------
+CREATE OR REFRESH STREAMING TABLE order_silever_streaming 
+(
+        CONSTRAINT valid_notification EXPECT (notifications IN ('Y','x')),
+        CONSTRAINT valid_date EXPECT (order_timestamp >= '2021-12-26') ON VIOLATION DROP ROW,
+        CONSTRAINT valid_id EXPECT(customer_id IS NOT NULL) ON VIOLATION FAIL UPDATE
+)
+AS
+SELECT order_id,
+        timestamp(order_timestamp) as order_timestamp,
+        customer_id,
+        notifications
+FROM STREAM orders_bronze_streaming;
+
+------------- Gold - Materialize table -----------------
+CREATE OR REFRESH MATERIALIZED VIEW gold_orders_by_date AS
+SELECT date(order_timestamp) as order_date,
+        count(1) as total_daily_orders
+FROM  order_silever_streaming
+GROUP BY date(order_timestamp)
